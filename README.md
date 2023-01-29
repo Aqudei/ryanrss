@@ -1,0 +1,1 @@
+A simple python utility that accepts Excel files containing list of domain names and crawl it for RSS feeds.
