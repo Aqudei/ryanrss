@@ -8,27 +8,46 @@ import json
 import csv
 import traceback as tb
 import concurrent.futures
-
+from urllib.parse import urlunparse, urlparse
 load_dotenv()
 
 
 INPUT_FILE = os.environ.get("INPUT_FILE")
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Referer': 'https://www.google.com/',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+}
 
+
+def test_feed_url(base_url):
+    """
+    docstring
+    """
+    url_parts = list(urlparse(base_url))
+    url_parts[2] = 'feed/'
+
+    url = urlunparse(url_parts)
+
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=20)
+        if response.status_code == 200:
+            return url, response.status_code
+        else:
+            return '', response.status_code
+    except Exception as e:
+        return
 
 def crawl_feeds(url):
     """
     docstring
     """
     a_tags = set()
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Referer': 'https://www.google.com/',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-    }
-    response = requests.get(url, timeout=20, verify=False, headers=headers)
+
+    response = requests.get(url, timeout=20, verify=False, headers=HEADERS)
     print(f"Response Status code: {response.status_code}")
     if response.status_code == 200:
         print("Parsing html...")
@@ -50,12 +69,31 @@ def crawl_feeds(url):
                 "status": response.status_code
             }
 
+    custom_feed_url = test_feed_url(url)
+    if custom_feed_url:
+        custom_url, custom_status = custom_feed_url
+        return {
+            "feeds": [custom_url],
+            "url": url,
+            "errors": '',
+            "status": custom_status
+        }
+
     return {
         "feeds": None,
         "url": url,
         "errors": f"No RSS link found",
         "status": response.status_code
     }
+
+
+def to_absolute_feed_url(domain, url):
+    """
+    docstring
+    """
+    parts = list(urlparse(url))
+    if parts[0]:
+        return url
 
 
 if __name__ == "__main__":
@@ -73,34 +111,21 @@ if __name__ == "__main__":
             future_to_url = {executor.submit(
                 crawl_feeds, row.Domain): row for row in df.itertuples()}
             for idx, future in enumerate(concurrent.futures.as_completed(future_to_url)):
-                url = future_to_url[future]
-                print(f"Done processing [{idx+1}] {url}")
+                panda_row = future_to_url[future]
+                print(f"Done processing [{idx+1}] {panda_row}")
                 try:
                     data = future.result()
                     if data['feeds']:
                         for f in data['feeds']:
+                            absolute_url = to_absolute_feed_url(
+                                panda_row.Domain, f)
                             writer.writerow(
-                                (url.Domain, url._2, f, "OK", data['status_code']))
+                                (panda_row.Domain, panda_row._2, absolute_url, "OK", data['status']))
                     else:
                         writer.writerow(
-                            (url.Domain, url._2, '', data['errors'], data['status_code']))
+                            (panda_row.Domain, panda_row._2, '-', data['errors'], data['status']))
                 except Exception as exc:
                     writer.writerow(
-                        (url.Domain, url._2, '', str(exc), 'Failure'))
+                        (panda_row.Domain, panda_row._2, '-', str(exc), 'Failure'))
                 else:
-                    print('%r page is %d bytes' % (url, len(data)))
-
-    # with open("./output.csv", 'wt', newline='') as outfile:
-    #     writer = csv.writer(outfile)
-    #     writer.writerow(('Domain', 'Publication Name', 'RSS', 'Remarks'))
-    #     for idx, row in enumerate(df.itertuples()):
-    #         try:
-    #             print(f"Processing [{idx+1}]\t{row.Domain}")
-    #             urls = crawl_feeds(row.Domain)
-    #             if urls['feeds']:
-    #                 for f in urls['feeds']:
-    #                     writer.writerow((row.Domain, row._2, f, "OK"))
-    #             else:
-    #                 writer.writerow((row.Domain, row._2, '', urls['errors']))
-    #         except Exception as e:
-    #             writer.writerow((row.Domain, row._2, '', str(e)))
+                    print('%r page is %d bytes' % (panda_row, len(data)))
